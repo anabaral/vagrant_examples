@@ -1,0 +1,142 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+
+servers = [
+    {
+        :name => "icp-worker1",
+        :type => "node",
+        :box => "centos/7",
+        :box_version => "20180831.0.0",
+        :eth1 => "192.168.205.11",
+        :mem => "4096",
+        :cpu => "1",
+		:disk => "100GB"
+    },
+    {
+        :name => "icp-worker2",
+        :type => "node",
+        :box => "centos/7",
+        :box_version => "20180831.0.0",
+        :eth1 => "192.168.205.12",
+        :mem => "4096",
+        :cpu => "1",
+		:disk => "100GB"
+    },
+	{
+        :name => "icp-master",
+        :type => "master",
+        :box => "centos/7",
+        :box_version => "20180831.0.0",
+        :eth1 => "192.168.205.10",
+        :mem => "20480",
+        :cpu => "4",
+		:disk => "100GB"
+    }
+]
+
+# This script to install k8s using kubeadm will get executed after a box is provisioned
+$configureBox = <<-SCRIPT
+	setenforce 0
+	echo 'nameserver 8.8.8.8' >> /etc/resolv.conf
+    yum -y install net-tools
+    # install docker v18.06
+    # reason for not using docker provision is that it always installs latest version of the docker, but kubeadm requires 17.03 or older
+    yum -y install yum-utils device-mapper-persistent-data lvm2
+	yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+	yum -y install docker-ce-18.06.2.ce-3.el7 docker-ce-cli-18.06.2.ce-3.el7
+	systemctl start docker
+	# allow root login and password login 
+	sed -i -e "s/^PasswordAuthentication no/PasswordAuthentication yes/" /etc/ssh/sshd_config
+	sed -i -e "s/^#PermitRootLogin yes/#PermitRootLogin yes/" /etc/ssh/sshd_config
+	systemctl restart sshd
+	# master make ssh key and share it
+	if [ "$SVRTYPE" = "master" ]; then
+		ssh-keygen -b 4096 -f ~/.ssh/id_rsa -N ""
+		cp ~/.ssh/id_rsa.pub /vagrant/shared/id_rsa.pub
+	fi
+SCRIPT
+
+$configureMaster = <<-SCRIPT
+    echo "This is master"
+    # ip of this box
+    # IP_ADDR=`ifconfig eth1 | grep -i mask | awk '{print $2}'| cut -f2 -d:`
+    # install k8s master
+    # HOST_NAME=$(hostname -s)
+	
+	# getting ssh key
+	mkdir ~/.ssh/
+	cp /shared/id_rsa.pub ~/.ssh/authorized_keys
+	# checking connect by ssh
+	grep "^192.*icp-worker" /etc/hosts | awk '{print "ssh -o StrictHostKeyChecking=no " $1 " ls / " }' | while read line ; do sh -c "$line" ; done
+	
+	### grep "^192.*icp-worker" /etc/hosts | awk '{print "ssh-copy-id -i ~/.ssh/id_rsa.pub -o StrictHostKeyChecking=no " $1 }' | while read line ; do sh -c "$line" ; done
+	### cp ~/.ssh/id_rsa ./cluster/ssh_key
+	
+	#
+	docker pull ibmcom/icp-inception:3.2.0
+	mkdir /opt/ibm-cloud-private-3.2.0
+    cd /opt/ibm-cloud-private-3.2.0
+	docker run -v $(pwd):/data -e LICENSE=accept ibmcom/icp-inception:3.2.0 cp -r cluster /data
+	/bin/cp -f ~/.ssh/id_rsa ./ssh_key
+	chmod 644 ./ssh_key
+	
+	echo  "######################"
+	echo  "#     READY TO INSTALL"
+	echo  "######################"
+SCRIPT
+
+$configureNode = <<-SCRIPT
+    echo "This is worker"
+SCRIPT
+
+Vagrant.configure("2") do |config|
+
+    config.vm.synced_folder "shared/", "/shared"
+
+    servers.each do |opts|
+        config.vm.define opts[:name] do |config|
+
+            config.vm.box = opts[:box]
+            config.vm.hostname = opts[:name]
+            config.vm.network :private_network, ip: opts[:eth1]
+			#config.disksize.size = opts[:disk]
+
+            config.vm.provider "virtualbox" do |v, override|
+                v.name = opts[:name]
+            	v.customize ["modifyvm", :id, "--groups", "/Ballerina Development"]
+                v.customize ["modifyvm", :id, "--memory", opts[:mem]]
+                v.customize ["modifyvm", :id, "--cpus", opts[:cpu]]
+				override.vm.box_url = "https://cloud.centos.org/centos/7/vagrant/x86_64/images/CentOS-7-x86_64-Vagrant-1803_01.VirtualBox.box"
+            end
+
+            config.vm.provision "shell", env: { "SVRTYPE" => opts[:type] }, inline: $configureBox
+			config.vm.provision "shell", inline: 'sed -i -e "s/^::1/#::1/" /etc/hosts'
+			config.vm.provision "shell", inline: 'sed -i "/127.0.0.1[[:space:]]*icp-/d" /etc/hosts'
+            servers.each do |svrs|
+                config.vm.provision "shell", inline: 'echo "$1 $2" >> /etc/hosts', args: [ svrs[:eth1] , svrs[:name] ]
+            end
+        end
+    end
+
+end
+
+
+Vagrant.configure("2") do |config|
+
+    servers.each do |opts|
+        config.vm.define opts[:name] do |config|
+
+            config.vm.box = opts[:box]
+            config.vm.hostname = opts[:name]
+            config.vm.network :private_network, ip: opts[:eth1]
+
+			if opts[:type] == "master"
+				config.vm.provision "shell", inline: $configureMaster
+			else
+				config.vm.provision "shell", inline: $configureNode
+			end
+		end
+	end
+	
+end
