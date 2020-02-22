@@ -33,21 +33,16 @@ servers = [
 
 # This script to install k8s using kubeadm will get executed after a box is provisioned
 $configureBox = <<-SCRIPT
-    # /etc/hosts 
-	cat >>/etc/hosts  <<EOF
-	192.128.205.10  k8s-head
-	192.128.205.11  k8s-node-1
-	192.128.205.12  k8s-node-2
-EOF
+
     # bridged traffic to iptables enabled for kube-router
-	cat >> /etc/ufw/sysctl.conf <<EOF
-	net/bridge/bridge-nf-call-ip6tables = 1
-	net/bridge/bridge-nf-call-iptables = 1
-	net/bridge/bridge-nf-call/arptables = 1
+    cat >> /etc/ufw/sysctl.conf <<EOF
+net/bridge/bridge-nf-call-ip6tables = 1
+net/bridge/bridge-nf-call-iptables = 1
+net/bridge/bridge-nf-call/arptables = 1
 EOF
     # /etc/resolv.conf
-	cat >> /etc/resolv.conf <<EOF
-	nameserver 8.8.8.8
+    cat >> /etc/resolv.conf <<EOF
+nameserver 8.8.8.8
 EOF
     # install docker v17.03
     # reason for not using docker provision is that it always installs latest version of the docker, but kubeadm requires 17.03 or older
@@ -62,7 +57,7 @@ EOF
     apt-get install -y apt-transport-https curl
     curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
     cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
-    deb http://apt.kubernetes.io/ kubernetes-xenial main
+deb http://apt.kubernetes.io/ kubernetes-xenial main
 EOF
     apt-get update
     apt-get install -y kubelet kubeadm kubectl
@@ -76,7 +71,7 @@ EOF
     # set node-ip
     sudo sed -i "/^[^#]*KUBELET_EXTRA_ARGS=/c\KUBELET_EXTRA_ARGS=--node-ip=$IP_ADDR" /etc/default/kubelet
     sudo systemctl restart kubelet
-	# required for setting up password less ssh between guest VMs
+    # required for setting up password less ssh between guest VMs
     sudo sed -i "/^[^#]*PasswordAuthentication[[:space:]]no/c\PasswordAuthentication yes" /etc/ssh/sshd_config
     sudo service sshd restart
 SCRIPT
@@ -94,12 +89,122 @@ $configureMaster = <<-SCRIPT
     chown $(id -u vagrant):$(id -g vagrant) /home/vagrant/.kube/config
     # install Calico pod network addon
     export KUBECONFIG=/etc/kubernetes/admin.conf
-	### OLD 
+    ### OLD 
     ### kubectl apply -f https://docs.projectcalico.org/v3.1/getting-started/kubernetes/installation/hosted/rbac-kdd.yaml
     ### kubectl apply -f https://docs.projectcalico.org/v3.1/getting-started/kubernetes/installation/hosted/kubernetes-datastore/calico-networking/1.7/calico.yaml
-	kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+    kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
     kubeadm token create --print-join-command >> /etc/kubeadm_join_cmd.sh
     chmod +x /etc/kubeadm_join_cmd.sh
+
+SCRIPT
+
+$configureDashboard = <<-SCRIPT
+    echo -e "\n###\n### Installing dashboard...\n###\n"
+    sleep 2
+    # dashboard: installing
+    kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v1.10.1/src/deploy/recommended/kubernetes-dashboard.yaml
+    TOKEN_NAME=$(kubectl get secret -n kube-system | grep kubernetes-dashboard-token | awk '{print $1}' )
+kubectl get serviceaccount kubernetes-dashboard -o yaml > $HOME/kubernetes-dashboard-sa.yaml
+cat >>$HOME/kubernetes-dashboard-sa.yaml <<EOF
+secrets:
+- name: ${TOKEN_NAME}
+EOF
+    kubectl apply -f $HOME/kubernetes-dashboard-sa.yaml
+
+    # dashboard: clusterRoleBinding
+    cat > $HOME/cluster-role-binding-dashboard.yaml <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  annotations:
+  labels:
+    k8s-app: kubernetes-dashboard
+  name: kubernetes-dashboard
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: kubernetes-dashboard
+  namespace: kube-system
+EOF
+    kubectl apply -f $HOME/cluster-role-binding-dashboard.yaml
+    
+    # dashboard: get token
+    TOKEN_NAME=$(kubectl get secret -n kube-system | grep kubernetes-dashboard-token | awk '{print $1}' )
+    TOKEN=$(kubectl describe -n kube-system secret ${TOKEN_NAME} | grep "token:" | awk '{print $2'} )
+    su vagrant -c "kubectl config set-credentials kubernetes-admin --token=\"${TOKEN}\" "
+    
+    # dashboard: you will be using this config file to log on
+    su vagrant -c "cp $HOME/.kube/config /vagrant/config"
+    
+    # dashboard: generate cert and key
+    openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout $HOME/k8s.dashboard.key -out $HOME/k8s.dashboard.crt -subj "/CN=dashboard.k8s.com"
+    kubectl -n kube-system create secret tls kubernetes-dashboard-tls-secret --cert $HOME/k8s.dashboard.crt --key $HOME/k8s.dashboard.key
+
+    # dashboard: install ingress controller
+    # it will be nicer if ingress controller installed as daemonset, so edit some
+    curl -s  https://raw.githubusercontent.com/kubernetes/ingress-nginx/nginx-0.29.0/deploy/static/mandatory.yaml | sed -e "s/kind: Deployment/kind: DaemonSet/" -e "s/replicas: 1/#replicas: 1/" -e "s#kubernetes.io/os:#beta.kubernetes.io/os:#" | kubectl create -f -
+
+    # dashboard: add service for ingress controller
+    cat > nginx-ingress-svc.yaml <<EOF
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: "2020-02-21T02:26:01Z"
+  name: ingress-nginx
+  namespace: ingress-nginx
+spec:
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 80
+  - name: https
+    nodePort: 32443
+    port: 443
+    protocol: TCP
+    targetPort: 443
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+  sessionAffinity: None
+  type: LoadBalancer
+EOF
+    kubectl create -f nginx-ingress-svc.yaml
+
+    # dashboard: add ingress
+    cat > dashboard-ingress.yaml <<EOF
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: dashboard-ingress
+  namespace: kube-system
+  annotations:
+    # redirect to https while access by http
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # HTTPS transfer，(because ingress use HTTP  by default)
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  # configure the secret created above
+  tls:
+   - secretName: kubernetes-dashboard-tls-secret
+     hosts:
+     - dashboard.k8s.com
+  rules:
+  - host: dashboard.k8s.com
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: kubernetes-dashboard
+          servicePort: 443
+EOF
+    kubectl create -f dashboard-ingress.yaml
+    
+    echo -e "### Done. edit your hosts file to add this host to be dashboard.k8s.com"
 SCRIPT
 
 $configureNode = <<-SCRIPT
@@ -122,26 +227,28 @@ Vagrant.configure("2") do |config|
             config.vm.provider "virtualbox" do |v|
 
                 v.name = opts[:name]
-            	v.customize ["modifyvm", :id, "--groups", "/Ballerina Development"]
+                v.customize ["modifyvm", :id, "--groups", "/Ballerina Development"]
                 v.customize ["modifyvm", :id, "--memory", opts[:mem]]
                 v.customize ["modifyvm", :id, "--cpus", opts[:cpu]]
 
             end
 
-            # we cannot use this because we can't install the docker version we want - https://github.com/hashicorp/vagrant/issues/4871
-            #config.vm.provision "docker"
+            config.vm.provision "shell", env: { "SVRTYPE" => opts[:type] }, inline: $configureBox
 
-            config.vm.provision "shell", inline: $configureBox
+            servers.each do |svrs|
+                config.vm.provision "shell", inline: 'echo "Processing /etc/hosts"'
+                config.vm.provision "shell", inline: 'echo "$1 $2" >> /etc/hosts', args: [ svrs[:eth1] , svrs[:name] ]
+            end
 
             if opts[:type] == "master"
                 config.vm.provision "shell", inline: $configureMaster
+				# 이 시점에 실행하면 에러가 나서 실행이 안됨.
+                # config.vm.provision "shell", inline: $configureDashboard
             else
                 config.vm.provision "shell", inline: $configureNode
             end
-
         end
 
     end
 
 end 
-
