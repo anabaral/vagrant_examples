@@ -10,8 +10,11 @@ echo -e "\n###\n### Installing dashboard...\n###\n"
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0-rc5/aio/deploy/recommended.yaml
 
 # dashboard: clusterRoleBinding firstly authorized too little, should be extended to admin
-kubectl get clusterrolebindings kubernetes-dashboard -o yaml \
-  | sed -e "s/^  name: kubernetes-dashboard$/  name: cluster-admin/" > cluster-role-binding-dashboard-for2.0.0.yaml
+# how: mapped ClusterRole originally kubernetes-dashboard, to be cluster-admin
+kubectl get clusterrolebindings kubernetes-dashboard -o yaml   | awk 'BEGIN{flag=0}{
+    if(flag==1){print "  name: cluster-admin"; flag=0} 
+    else { print $0 } 
+    ; if ($0 == "  kind: ClusterRole") flag=1 }'> cluster-role-binding-dashboard-for2.0.0.yaml
 kubectl delete clusterrolebinding kubernetes-dashboard
 kubectl create -f cluster-role-binding-dashboard-for2.0.0.yaml
 
@@ -19,8 +22,7 @@ kubectl create -f cluster-role-binding-dashboard-for2.0.0.yaml
 # dashboard: get token
 # since 2.0.0 makes ServiceAccount kubernetes-dashboard in namespace kubernetes-dashboard,
 # token is also generated in the same namespace.
-TOKEN_NAME=$(kubectl get secret -n kubernetes-dashboard | grep kubernetes-dashboard-token | awk '{prin
-t $1}')
+TOKEN_NAME=$(kubectl get secret -n kubernetes-dashboard | grep kubernetes-dashboard-token | awk '{print $1}')
 TOKEN=$(kubectl describe -n kubernetes-dashboard secret ${TOKEN_NAME} | grep "token:" | awk '{print $2'} )
 kubectl config set-credentials kubernetes-admin --token="${TOKEN}"
 
@@ -31,7 +33,7 @@ cp $HOME/.kube/config /vagrant/config
 
 # dashboard: generate cert and key
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout k8s.dashboard.key -out k8s.dashboard.crt -subj "/CN=dashboard.k8s.com"
-kubectl -n kube-system create secret tls kubernetes-dashboard-tls-secret --cert k8s.dashboard.crt --key k8s.dashboard.key
+kubectl -n kubernetes-dashboard create secret tls kubernetes-dashboard-tls-secret --cert k8s.dashboard.crt --key k8s.dashboard.key
 
 
 # dashboard: install ingress controller
