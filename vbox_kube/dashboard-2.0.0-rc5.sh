@@ -41,6 +41,9 @@ kubectl -n kubernetes-dashboard create secret tls kubernetes-dashboard-tls-secre
 curl -s  https://raw.githubusercontent.com/kubernetes/ingress-nginx/nginx-0.29.0/deploy/static/mandatory.yaml | sed -e "s/kind: Deployment/kind: DaemonSet/" -e "s/replicas: 1/#replicas: 1/" -e "s#kubernetes.io/os:#beta.kubernetes.io/os:#" | kubectl create -f -
 
 # dashboard: add service for ingress controller
+#
+# NOTICE: USING NODEPORT 32443 !!
+#
 cat > nginx-ingress-svc.yaml <<EOF
 apiVersion: v1
 kind: Service
@@ -97,4 +100,7 @@ spec:
 EOF
 kubectl create -f dashboard-ingress.yaml
     
-echo -e "### Done. edit your hosts file to add this host to be dashboard.k8s.com"
+echo "### Done. You need to do the followings:"
+echo "### 1) Edit your hosts file to add this host to be dashboard.k8s.com"
+echo "### 2) Access dashboard by https://dashboard.k8s.com:32443/"
+echo "### 3) Choose option 'config' and upload the config file generated."
