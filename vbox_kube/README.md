@@ -39,3 +39,11 @@
 5) 위의 설명이 불충분할 수 있습니다. 
    혹은 환경의 차이로 잘 안될 수도 있습니다.
    이슈를 제기해 주세요.
+
+추가
+- 놀랍게도 Windows 10 에서 Citrix 계열의 VDI 를 사용할 때 다음의 오류가 나면서 virtualbox 를 사용할 수 없는 것을 발견했습니다:
+  <pre><code>Stderr: VBoxManage.exe: error: The virtual machine 'k8s-head' has terminated unexpectedly during startup with exit code 1 (0x1).  More details may be available in 'C:\Users\Administrator\VirtualBox VMs\Ballerina Development\k8s-head\Logs\VBoxHardening.log'
+  VBoxManage.exe: error: Details: code E_FAIL (0x80004005), component MachineWrap, interface IMachine</code></pre>
+  이 오류는 정말 경우에 따라 나기도 안 나기도 하기에 종잡을 수 없다가 VDI를 닫으면 해제되는 걸 알게 되었는데,
+  Windows 10의 경우 VDI 와 vagrant 실행 데스크톱(Desktop)을 분리하기만 해도 괜찮아집니다.
+  회사용 VDI의 경우 화면복제금지 같은 다양한 보안 장치를 띄우는데 이것이 Virtualbox와 충돌하나 봅니다. 
