@@ -41,12 +41,15 @@
    이슈를 제기해 주세요.
 
 추가
-- 놀랍게도 Windows 10 에서 Citrix 계열의 VDI 를 사용할 때 다음의 오류가 나면서 virtualbox 를 사용할 수 없는 것을 발견했습니다:
+- 다음의 오류가 나면서 virtualbox 를 사용할 수 없는 것을 발견했습니다:
   <pre><code>Stderr: VBoxManage.exe: error: The virtual machine 'k8s-head' has terminated unexpectedly during startup with exit code 1 (0x1).  More details may be available in 'C:\Users\Administrator\VirtualBox VMs\Ballerina Development\k8s-head\Logs\VBoxHardening.log'
   VBoxManage.exe: error: Details: code E_FAIL (0x80004005), component MachineWrap, interface IMachine</code></pre>
-  이 오류는 정말 경우에 따라 나기도 안 나기도 하기에 종잡을 수 없다가 VDI를 닫으면 해제되는 걸 알게 되었는데,
-  Windows 10의 경우 VDI 와 vagrant 실행 데스크톱(Desktop)을 분리하기만 해도 괜찮아집니다.
-  회사용 VDI의 경우 화면복제금지 같은 다양한 보안 장치를 띄우는데 이것이 Virtualbox와 충돌하나 봅니다. 
+  이 에러에 대한 대처 방법은 두 가지가 있습니다. 경우에 따라서는 둘 다 해야 할 수 있습니다.
+  1) vagrant를 실행하는 커맨드 창이 관리자 권한으로 실행되고 있어야 합니다.
+  2) 놀랍게도 Windows 10 에서 Citrix 계열의 VDI 를 사용할 때 나기도 합니다. 이럴 경우 나다가 안 나다가 해서 명확한 원인을 찾지 못했는데
+     회사용 VDI를 닫거나 최소화 하니 해제되는 걸 발견했습니다. 해결 방법은 Windows 10의 경우 VDI 와 vagrant 실행 데스크톱(Desktop)을 
+     분리하기만 해도 괜찮아집니다. (윈도우 키 + TAB 키 같이 눌러 보면 무슨 의미인지 아실 듯)
+     회사용 VDI의 경우 화면복제금지 같은 다양한 보안 기능을 기동하는데 이것이 Virtualbox와 충돌하나 봅니다. 
 - 그 외에, 서비스들이 간혹 32443 포트 (대시보드 사용) 를 랜덤 점유해서 문제가 되는 경우가 있습니다. 
   보통은 해당 프로세스를 죽이면 서비스가 다시 뜨면서 다른 포트를 사용하므로 해결됩니다.
   <pre><code>C:\> taskkill /f /im complicting_process.exe </code></pre>
